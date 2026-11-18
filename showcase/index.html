@@ -1,0 +1,60 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: MIT -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Document translation</title></head>
+<body>
+<h1>Document translation</h1>
+<form>
+  <p><label>Document <input id="document-file" type="file" accept=".docx,.pptx,.xlsx,.pdf" required></label></p>
+  <p><label>Source <select id="source"><option value="">Auto-detect</option></select></label></p>
+  <p><label>Targets <select id="targets" multiple required></select></label></p>
+  <p><label>Engine <select id="engine"></select></label></p>
+  <button>Translate</button>
+</form>
+<p id="status" role="status"></p><ul id="downloads"></ul><pre id="report"></pre>
+<script>
+const byId = id => document.getElementById(id);
+const form = document.querySelector("form");
+const status = byId("status");
+fetch("/api/options").then(r => r.json()).then(({languages, engines}) => {
+  for (const code of languages) {
+    byId("source").add(new Option(code, code));
+    byId("targets").add(new Option(code, code));
+  }
+  for (const engine of engines) byId("engine").add(new Option(engine, engine));
+}).catch(() => { status.textContent = "Could not load configuration."; });
+form.addEventListener("submit", async event => {
+  event.preventDefault();
+  const file = byId("document-file").files[0];
+  const query = new URLSearchParams({filename: file.name, sourceLanguage: byId("source").value,
+                                    engine: byId("engine").value});
+  for (const item of byId("targets").selectedOptions) query.append("targetLanguage", item.value);
+  const button = form.querySelector("button");
+  button.disabled = true;
+  status.textContent = "Translating…";
+  byId("downloads").replaceChildren();
+  byId("report").textContent = "";
+  try {
+    const response = await fetch(`/api/jobs?${query}`, {method: "POST", body: file,
+                                headers: {"X-Translation-Showcase": "1"}});
+    const report = await response.json();
+    if (!response.ok) throw new Error(report.detail || "Translation failed.");
+    status.textContent = "Complete";
+    for (const output of report.outputs) {
+      const link = document.createElement("a");
+      link.textContent = output.path;
+      link.href = `/api/jobs/${report.jobId}/${output.path.split("/").map(encodeURIComponent).join("/")}`;
+      const item = document.createElement("li");
+      item.append(link);
+      byId("downloads").append(item);
+    }
+    byId("report").textContent = JSON.stringify(report, null, 2);
+  } catch (error) {
+    status.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
