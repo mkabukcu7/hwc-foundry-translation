@@ -9,6 +9,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 
 from renderer.app import app
+from scripts import local_demo
 from scripts.showcase import create_app
 from services import retention, storage
 from services.config import ReconstructionError
@@ -68,6 +69,40 @@ def test_showcase_lists_recent_local_results(tmp_path):
 
     client = TestClient(create_app(tmp_path), base_url="http://localhost")
     assert client.get("/api/jobs").json() == {"jobs": [report]}
+
+
+def test_showcase_downloads_historical_language_after_configuration_changes(monkeypatch, tmp_path):
+    job_id = "a" * 32
+    result = tmp_path / job_id / "fr" / "brief.docx"
+    result.parent.mkdir(parents=True)
+    result.write_bytes(b"translated")
+    monkeypatch.setenv("SUPPORTED_LANGUAGES", "en,de")
+    client = TestClient(create_app(tmp_path), base_url="http://localhost")
+
+    response = client.get(f"/api/jobs/{job_id}/fr/brief.docx")
+
+    assert response.status_code == 200
+    assert response.content == b"translated"
+
+
+def test_local_report_only_names_glossary_for_targets_that_used_it(monkeypatch, tmp_path):
+    source = tmp_path / "brief.docx"
+    source.write_bytes(b"document")
+    monkeypatch.setattr(local_demo, "validate_document", lambda *_: None)
+    monkeypatch.setattr(local_demo.extraction, "extract", lambda *_args, **_kwargs: {
+        "segments": [{"text": "Italian source content"}],
+    })
+
+    def translate(_data, _name, _source, _target, _job_id, _engine, _extracted, terms):
+        assert terms == []
+        return b"translated", {"glossaryApplied": False, "charactersCharged": None}
+
+    monkeypatch.setattr(local_demo, "translate_file", translate)
+    report = local_demo.run_file(source, tmp_path / "results", "it", ["fr"])
+
+    assert report["glossary"] is None
+    assert report["outputs"][0]["glossary"] is None
+    assert report["outputs"][0]["glossaryMode"] is None
 
 
 def test_showcase_lists_glossaries(monkeypatch, tmp_path):

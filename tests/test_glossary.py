@@ -41,3 +41,19 @@ def test_packaged_sample_matches_checkout_and_loads_without_repository(monkeypat
     monkeypatch.delenv("GLOSSARY_PATH", raising=False)
     monkeypatch.delenv("GLOSSARY_MODE", raising=False)
     assert glossary.load("sample") == sample.read_text(encoding="utf-8-sig")
+
+
+def test_available_uses_same_fallback_directory_as_load(monkeypatch, tmp_path):
+    app_root = tmp_path / "app"
+    local = tmp_path / "glossary"
+    packaged = app_root / "glossary"
+    local.mkdir()
+    packaged.mkdir(parents=True)
+    (local / "brand.csv").write_text("en,fr\nbrand,marque\n", encoding="utf-8")
+    (packaged / "sample.csv").write_text("en,fr\nsample,exemple\n", encoding="utf-8")
+    monkeypatch.setattr(glossary, "APP_ROOT", app_root)
+    monkeypatch.delenv("GLOSSARY_PATH", raising=False)
+    monkeypatch.delenv("GLOSSARY_MODE", raising=False)
+
+    assert glossary.available() == ["sample"]
+    assert glossary.load("sample") == "en,fr\nsample,exemple\n"

@@ -16,14 +16,18 @@ APP_ROOT = Path(__file__).resolve().parents[1]
 def available():
     if os.getenv("GLOSSARY_MODE", "static") == "none":
         return []
-    configured = os.getenv("GLOSSARY_PATH")
-    local = APP_ROOT.parent / "glossary"
-    packaged = APP_ROOT / "glossary"
-    directory = Path(configured).parent if configured else local if local.is_dir() else packaged
+    directory = _default_path().parent
     if not directory.is_dir():
         return []
     return sorted(path.stem for path in directory.glob("*.csv")
                   if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", path.stem))
+
+
+def _default_path():
+    configured = os.getenv("GLOSSARY_PATH")
+    local = APP_ROOT.parent / "glossary" / "sample.csv"
+    packaged = APP_ROOT / "glossary" / "sample.csv"
+    return Path(configured) if configured else local if local.is_file() else packaged
 
 
 def load(name="", job_id=""):
@@ -32,10 +36,7 @@ def load(name="", job_id=""):
         return ""
     if mode != "static":
         raise ConfigurationError("GLOSSARY_MODE must be none or static")
-    configured = os.getenv("GLOSSARY_PATH")
-    local = APP_ROOT.parent / "glossary" / "sample.csv"
-    packaged = APP_ROOT / "glossary" / "sample.csv"
-    default = Path(configured) if configured else local if local.is_file() else packaged
+    default = _default_path()
     if name and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name):
         raise ValueError("Invalid glossary name")
     path = default.with_name(f"{name}.csv") if name else default

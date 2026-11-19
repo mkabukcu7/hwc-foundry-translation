@@ -91,7 +91,7 @@ def create_app(output_dir=Path("samples/results/local")):
 
     @app.get("/api/jobs/{job_id}/{language}/{filename}")
     def download(job_id: str, language: str, filename: str):
-        if (not storage.valid_job_id(job_id) or language not in languages.enabled()
+        if (not storage.valid_job_id(job_id) or language not in languages.LATIN_CODES
                 or filename in {".", ".."} or any(c in filename for c in "/\\:\r\n\x00")):
             raise HTTPException(404)
         path = output_dir / job_id / language / filename

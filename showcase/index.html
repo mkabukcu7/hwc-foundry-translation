@@ -100,7 +100,7 @@
       <div class="card">
         <div class="card-head">
           <h2>New translation</h2>
-          <p>Your file and generated results stay on this computer.</p>
+          <p>Office translations send documents to Azure Translator; other workflows send document content to Azure services for processing. Generated results are stored on this computer.</p>
         </div>
         <form id="translation-form" class="card-body">
           <div class="field">
@@ -120,7 +120,7 @@
           </div>
           <div class="field">
             <label for="glossary">Glossary</label>
-            <select id="glossary"><option value="none">No glossary</option></select>
+            <select id="glossary"><option value="">Configured default</option><option value="none">No glossary</option></select>
             <p class="hint">CSV files in the local <code>glossary</code> folder. PDF translation currently cannot apply Translator glossaries.</p>
           </div>
           <div class="field">
@@ -140,9 +140,9 @@
         </div>
         <div class="card-body">
           <div id="idle" class="empty">Choose a document to start a translation.</div>
-          <div id="run" class="run" aria-live="polite">
+          <div id="run" class="run">
             <div class="status-row">
-              <div class="status-copy"><strong id="run-title">Translating document</strong><span id="run-subtitle">Preparing text and artwork…</span></div>
+              <div class="status-copy" aria-live="polite"><strong id="run-title">Translating document</strong><span id="run-subtitle">Preparing text and artwork…</span></div>
               <div id="timer" class="timer">0.0s</div>
             </div>
             <div class="progress"><span></span></div>
@@ -154,6 +154,10 @@
             </div>
             <h3 class="section-title">Downloads</h3>
             <div id="downloads" class="downloads"></div>
+            <section id="warnings-section" hidden>
+              <h3 class="section-title">Review notes</h3>
+              <div id="warnings" class="subtle"></div>
+            </section>
             <h3 class="section-title">Step timing</h3>
             <div id="timings" class="subtle">Waiting for completion…</div>
           </div>
@@ -179,13 +183,15 @@
     const seconds = value => `${Number(value || 0).toFixed(1)}s`;
     const number = value => value == null ? "—" : new Intl.NumberFormat().format(value);
     const money = value => value == null ? "Not configured" : `$${Number(value).toFixed(4)}`;
-    const usage = report => report.outputs.reduce((total, output) => {
-      const data = output.usage || {};
-      for (const key of ["inputTokens", "outputTokens", "charactersCharged", "charactersSubmitted"]) {
-        total[key] += Number(data[key]) || 0;
-      }
-      return total;
-    }, {inputTokens: 0, outputTokens: 0, charactersCharged: 0, charactersSubmitted: 0});
+    const usage = report => Object.fromEntries(
+      ["inputTokens", "outputTokens", "charactersCharged", "charactersSubmitted"].map(key => {
+        const values = (report.outputs || []).map(output => output.usage?.[key]);
+        const known = values.length && values.every(value =>
+          value != null && value !== "" && Number.isFinite(Number(value))
+        );
+        return [key, known ? values.reduce((total, value) => total + Number(value), 0) : null];
+      })
+    );
     const downloadUrl = (report, output) =>
       `/api/jobs/${report.jobId}/${output.path.split("/").map(encodeURIComponent).join("/")}`;
 
@@ -229,25 +235,35 @@
     function renderReport(report, elapsed) {
       const totals = usage(report);
       const duration = sum(Object.values(report.durations || {}));
-      byId("metric-input").previousElementSibling.textContent = "Input tokens";
-      byId("metric-output").previousElementSibling.textContent = "Output tokens";
+      const characterMode = report.engine === "translator";
+      byId("metric-input").previousElementSibling.textContent = characterMode ? "Characters used" : "Input tokens";
+      byId("metric-output").previousElementSibling.textContent = characterMode ? "Character mode" : "Output tokens";
       byId("idle").style.display = "none";
       byId("run").classList.add("active", "complete");
       byId("run-title").textContent = "Translation complete";
       byId("run-subtitle").textContent = `${report.sourceLanguage} → ${report.targetLanguages.join(", ")}`;
-      if (report.glossary) byId("run-subtitle").textContent += ` · ${report.glossary} glossary`;
+      const glossaryOutputs = (report.outputs || []).filter(output => output.glossary && output.glossaryMode);
+      if (glossaryOutputs.length) {
+        const targets = glossaryOutputs.map(output => output.language).join(", ");
+        const label = characterMode ? "applied" : "supplied as guidance";
+        byId("run-subtitle").textContent +=
+          ` · ${glossaryOutputs[0].glossary} glossary ${label} for ${targets}`;
+      }
       byId("timer").textContent = seconds(elapsed ?? duration);
       byId("metric-time").textContent = seconds(duration);
       byId("metric-cost").textContent = money(report.estimatedCostUSD);
-      byId("metric-input").textContent = number(totals.inputTokens || totals.charactersSubmitted || totals.charactersCharged);
-      byId("metric-output").textContent = number(totals.outputTokens);
-      if (totals.outputTokens === 0 && totals.charactersCharged) {
-        byId("metric-input").previousElementSibling.textContent = "Characters used";
-        byId("metric-input").textContent = number(totals.charactersCharged || totals.charactersSubmitted);
-        byId("metric-output").previousElementSibling.textContent = "Character mode";
-        byId("metric-output").textContent = report.engine;
-      }
+      byId("metric-input").textContent = number(characterMode
+        ? totals.charactersCharged ?? totals.charactersSubmitted : totals.inputTokens);
+      byId("metric-output").textContent = characterMode ? report.engine : number(totals.outputTokens);
       renderDownloads(report);
+      const warnings = byId("warnings");
+      warnings.replaceChildren();
+      for (const warning of report.warnings || []) {
+        const item = document.createElement("p");
+        item.textContent = warning;
+        warnings.append(item);
+      }
+      byId("warnings-section").hidden = !warnings.childElementCount;
       byId("timings").textContent = Object.entries(report.durations || {})
         .map(([step, value]) => `${step}: ${seconds(value)}`).join(" · ") || "No timing details available.";
     }
@@ -282,7 +298,7 @@
           const usageCell = document.createElement("td");
           usageCell.innerHTML = report.engine === "llm"
             ? `<span class="subtle">${number(totals.inputTokens)} in · ${number(totals.outputTokens)} out<br>${money(report.estimatedCostUSD)}</span>`
-            : `<span class="subtle">${number(totals.charactersCharged || totals.charactersSubmitted)} characters<br>${money(report.estimatedCostUSD)}</span>`;
+            : `<span class="subtle">${number(totals.charactersCharged ?? totals.charactersSubmitted)} characters<br>${money(report.estimatedCostUSD)}</span>`;
           const time = document.createElement("td");
           time.textContent = seconds(sum(Object.values(report.durations || {})));
           const actions = document.createElement("td");
@@ -327,6 +343,8 @@
       byId("run-title").textContent = "Translating document";
       byId("run-subtitle").textContent = `${file.name} · ${targets.map(item => item.value).join(", ")}`;
       byId("downloads").replaceChildren();
+      byId("warnings").replaceChildren();
+      byId("warnings-section").hidden = true;
       byId("timings").textContent = "Waiting for completion…";
       byId("metric-time").textContent = "—";
       byId("metric-cost").textContent = "—";

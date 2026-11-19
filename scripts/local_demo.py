@@ -60,10 +60,19 @@ def run_file(source, output_dir, source_language=None, target_languages=("en",),
     started = perf_counter()
     for target in target_languages:
         progress("translate")
+        target_terms = glossary.terms(raw_glossary, source_language, target, job_id)
         result, usage = translate_file(
             data, source.name, source_language, target, job_id, settings, extracted,
-            glossary.terms(raw_glossary, source_language, target, job_id),
+            target_terms,
         )
+        glossary_mode = (
+            "applied" if usage.get("glossaryApplied")
+            else "guidance" if engine == "llm" and any(
+                term["term"].casefold() in text.casefold() for term in target_terms
+            )
+            else None
+        )
+        selected_glossary = (glossary_name or "default") if glossary_mode else None
         cost = translation_engines.estimate_cost(
             settings, input_tokens=usage.get("inputTokens"), output_tokens=usage.get("outputTokens"),
             characters=usage.get("charactersCharged"),
@@ -73,14 +82,17 @@ def run_file(source, output_dir, source_language=None, target_languages=("en",),
         destination.write_bytes(result)
         warnings.extend(usage.get("warnings", []))
         outputs.append({"language": target, "path": f"{target}/{source.name}", "usage": usage,
-                        "estimatedCostUSD": cost})
+                        "estimatedCostUSD": cost, "glossary": selected_glossary,
+                        "glossaryMode": glossary_mode})
     durations["translate"] = perf_counter() - started
     costs = [output["estimatedCostUSD"] for output in outputs]
+    used_glossaries = {output["glossary"] for output in outputs}
     report = {
         "jobId": job_id, "status": "complete", "sourceFile": source.name,
         "sourceSha256": sha256(data).hexdigest(), "sourceLanguage": source_language,
         "targetLanguages": list(target_languages), "engine": engine,
-        "glossary": None if not raw_glossary else glossary_name or "default",
+        "glossary": (next(iter(used_glossaries))
+                     if len(used_glossaries) == 1 and None not in used_glossaries else None),
         "deployment": settings.deployment_name, "model": settings.model_name,
         "durations": durations, "warnings": warnings, "outputs": outputs,
         "estimatedCostUSD": sum(costs) if all(cost is not None for cost in costs) else None,
