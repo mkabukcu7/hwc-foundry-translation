@@ -13,6 +13,19 @@ LOG = logging.getLogger(__name__)
 APP_ROOT = Path(__file__).resolve().parents[1]
 
 
+def available():
+    if os.getenv("GLOSSARY_MODE", "static") == "none":
+        return []
+    configured = os.getenv("GLOSSARY_PATH")
+    local = APP_ROOT.parent / "glossary"
+    packaged = APP_ROOT / "glossary"
+    directory = Path(configured).parent if configured else local if local.is_dir() else packaged
+    if not directory.is_dir():
+        return []
+    return sorted(path.stem for path in directory.glob("*.csv")
+                  if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", path.stem))
+
+
 def load(name="", job_id=""):
     mode = os.getenv("GLOSSARY_MODE", "static")
     if mode == "none":

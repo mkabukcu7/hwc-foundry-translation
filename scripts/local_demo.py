@@ -38,7 +38,8 @@ def run_file(source, output_dir, source_language=None, target_languages=("en",),
         languages.validate(source_language)
     target_languages = languages.targets(target_languages, source_language)
     raw_glossary = (glossary.load(glossary_name, job_id)
-                    if engine == "llm" or source.suffix.lower() != ".pdf" else "")
+                    if glossary_name != "none"
+                    and (engine == "llm" or source.suffix.lower() != ".pdf") else "")
     data = source.read_bytes()
     durations = {}
     started = perf_counter()
@@ -79,6 +80,7 @@ def run_file(source, output_dir, source_language=None, target_languages=("en",),
         "jobId": job_id, "status": "complete", "sourceFile": source.name,
         "sourceSha256": sha256(data).hexdigest(), "sourceLanguage": source_language,
         "targetLanguages": list(target_languages), "engine": engine,
+        "glossary": None if not raw_glossary else glossary_name or "default",
         "deployment": settings.deployment_name, "model": settings.model_name,
         "durations": durations, "warnings": warnings, "outputs": outputs,
         "estimatedCostUSD": sum(costs) if all(cost is not None for cost in costs) else None,
