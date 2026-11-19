@@ -1,60 +1,379 @@
 <!doctype html>
 <!-- SPDX-License-Identifier: MIT -->
 <html lang="en">
-<head><meta charset="utf-8"><title>Document translation</title></head>
-<body>
-<h1>Document translation</h1>
-<form>
-  <p><label>Document <input id="document-file" type="file" accept=".docx,.pptx,.xlsx,.pdf" required></label></p>
-  <p><label>Source <select id="source"><option value="">Auto-detect</option></select></label></p>
-  <p><label>Targets <select id="targets" multiple required></select></label></p>
-  <p><label>Engine <select id="engine"></select></label></p>
-  <button>Translate</button>
-</form>
-<p id="status" role="status"></p><ul id="downloads"></ul><pre id="report"></pre>
-<script>
-const byId = id => document.getElementById(id);
-const form = document.querySelector("form");
-const status = byId("status");
-fetch("/api/options").then(r => r.json()).then(({languages, engines}) => {
-  for (const code of languages) {
-    byId("source").add(new Option(code, code));
-    byId("targets").add(new Option(code, code));
-  }
-  for (const engine of engines) byId("engine").add(new Option(engine, engine));
-}).catch(() => { status.textContent = "Could not load configuration."; });
-form.addEventListener("submit", async event => {
-  event.preventDefault();
-  const file = byId("document-file").files[0];
-  const query = new URLSearchParams({filename: file.name, sourceLanguage: byId("source").value,
-                                    engine: byId("engine").value});
-  for (const item of byId("targets").selectedOptions) query.append("targetLanguage", item.value);
-  const button = form.querySelector("button");
-  button.disabled = true;
-  status.textContent = "Translating…";
-  byId("downloads").replaceChildren();
-  byId("report").textContent = "";
-  try {
-    const response = await fetch(`/api/jobs?${query}`, {method: "POST", body: file,
-                                headers: {"X-Translation-Showcase": "1"}});
-    const report = await response.json();
-    if (!response.ok) throw new Error(report.detail || "Translation failed.");
-    status.textContent = "Complete";
-    for (const output of report.outputs) {
-      const link = document.createElement("a");
-      link.textContent = output.path;
-      link.href = `/api/jobs/${report.jobId}/${output.path.split("/").map(encodeURIComponent).join("/")}`;
-      const item = document.createElement("li");
-      item.append(link);
-      byId("downloads").append(item);
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HWC Translation Studio</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --navy: #112a46;
+      --blue: #176b87;
+      --cyan: #49b7c4;
+      --cream: #f7f3eb;
+      --paper: #ffffff;
+      --ink: #18212b;
+      --muted: #667482;
+      --line: #dbe3e8;
+      --success: #167b5a;
+      --danger: #b23a48;
+      --shadow: 0 18px 55px rgba(17, 42, 70, .11);
     }
-    byId("report").textContent = JSON.stringify(report, null, 2);
-  } catch (error) {
-    status.textContent = error.message;
-  } finally {
-    button.disabled = false;
-  }
-});
-</script>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 82% 2%, rgba(73, 183, 196, .2), transparent 29rem),
+        linear-gradient(135deg, #f9f6ef 0%, #eef6f6 100%);
+      font: 15px/1.5 Inter, "Segoe UI", sans-serif;
+    }
+    button, input, select { font: inherit; }
+    .shell { width: min(1180px, calc(100% - 32px)); margin: auto; padding: 42px 0 72px; }
+    header { display: flex; justify-content: space-between; gap: 24px; align-items: end; margin-bottom: 26px; }
+    .eyebrow { margin: 0 0 8px; color: var(--blue); font-size: 12px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
+    h1 { margin: 0; color: var(--navy); font-family: Georgia, serif; font-size: clamp(36px, 5vw, 58px); line-height: 1; letter-spacing: -.04em; }
+    .intro { max-width: 600px; margin: 12px 0 0; color: var(--muted); font-size: 16px; }
+    .pill { display: inline-flex; gap: 8px; align-items: center; padding: 8px 13px; border: 1px solid var(--line); border-radius: 99px; background: rgba(255,255,255,.75); color: var(--muted); font-weight: 700; }
+    .pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 4px rgba(22,123,90,.12); }
+    .layout { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.35fr); gap: 22px; align-items: start; }
+    .card { overflow: hidden; border: 1px solid rgba(219,227,232,.9); border-radius: 24px; background: rgba(255,255,255,.92); box-shadow: var(--shadow); }
+    .card-head { padding: 22px 24px 17px; border-bottom: 1px solid var(--line); }
+    .card-head h2 { margin: 0; color: var(--navy); font-size: 19px; }
+    .card-head p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+    .card-body { padding: 24px; }
+    .field { margin-bottom: 18px; }
+    label { display: block; margin-bottom: 7px; color: var(--navy); font-size: 13px; font-weight: 750; }
+    input[type=file], select { width: 100%; border: 1px solid var(--line); border-radius: 12px; background: #fbfcfc; color: var(--ink); padding: 11px 12px; outline: none; }
+    input:focus, select:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(73,183,196,.18); }
+    select[multiple] { min-height: 126px; }
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .hint { margin: 7px 0 0; color: var(--muted); font-size: 12px; }
+    .primary { width: 100%; border: 0; border-radius: 13px; padding: 13px 18px; background: linear-gradient(135deg, var(--blue), var(--navy)); color: white; font-weight: 800; cursor: pointer; box-shadow: 0 8px 20px rgba(23,107,135,.24); }
+    .primary:disabled { cursor: wait; opacity: .62; }
+    .run { display: none; }
+    .run.active { display: block; }
+    .status-row { display: flex; justify-content: space-between; gap: 15px; align-items: start; }
+    .status-copy strong { display: block; color: var(--navy); font-size: 17px; }
+    .status-copy span { color: var(--muted); font-size: 13px; }
+    .timer { color: var(--blue); font-size: 30px; font-weight: 800; font-variant-numeric: tabular-nums; }
+    .progress { height: 7px; margin: 20px 0 22px; overflow: hidden; border-radius: 99px; background: #e8edef; }
+    .progress span { display: block; width: 38%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--cyan), var(--blue)); animation: sweep 1.5s ease-in-out infinite; }
+    @keyframes sweep { 0%,100% { transform: translateX(-110%); } 50% { transform: translateX(265%); } }
+    .run.complete .progress span { width: 100%; animation: none; transform: none; background: var(--success); }
+    .metric-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .metric { padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: #fbfcfc; }
+    .metric span { display: block; color: var(--muted); font-size: 11px; font-weight: 750; letter-spacing: .06em; text-transform: uppercase; }
+    .metric strong { display: block; margin-top: 4px; color: var(--navy); font-size: 19px; }
+    .section-title { margin: 22px 0 9px; color: var(--navy); font-size: 13px; font-weight: 800; }
+    .downloads { display: grid; gap: 8px; }
+    .download { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 11px 13px; border: 1px solid var(--line); border-radius: 12px; color: var(--navy); text-decoration: none; }
+    .download:hover { border-color: var(--cyan); background: #f7fbfb; }
+    .badge { border-radius: 99px; padding: 3px 8px; background: #e8f5f5; color: var(--blue); font-size: 11px; font-weight: 800; text-transform: uppercase; }
+    .error { margin-top: 14px; color: var(--danger); font-weight: 700; }
+    .history { margin-top: 22px; }
+    table { width: 100%; border-collapse: collapse; }
+    th { padding: 10px 16px; color: var(--muted); font-size: 11px; letter-spacing: .06em; text-align: left; text-transform: uppercase; }
+    td { padding: 14px 16px; border-top: 1px solid var(--line); vertical-align: middle; }
+    .file { display: block; overflow: hidden; max-width: 260px; color: var(--navy); font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+    .subtle { color: var(--muted); font-size: 12px; }
+    .history-actions { display: flex; gap: 7px; flex-wrap: wrap; }
+    .mini-link { color: var(--blue); font-size: 12px; font-weight: 800; text-decoration: none; }
+    .empty { padding: 30px; color: var(--muted); text-align: center; }
+    @media (max-width: 820px) { .layout { grid-template-columns: 1fr; } header { display: block; } .pill { margin-top: 18px; } .split { grid-template-columns: 1fr; } th:nth-child(3), td:nth-child(3) { display: none; } }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div>
+        <p class="eyebrow">HWC marketing workflow</p>
+        <h1>Translation Studio</h1>
+        <p class="intro">Translate branded Office documents with Azure AI, preserve their original format, and revisit recent runs.</p>
+      </div>
+      <span class="pill">Live services connected</span>
+    </header>
+
+    <section class="layout">
+      <div class="card">
+        <div class="card-head">
+          <h2>New translation</h2>
+          <p>Office translations send documents to Azure Translator; other workflows send document content to Azure services for processing. Generated results are stored on this computer.</p>
+        </div>
+        <form id="translation-form" class="card-body">
+          <div class="field">
+            <label for="document-file">Document</label>
+            <input id="document-file" type="file" accept=".docx,.pptx,.xlsx,.pdf" required>
+            <p class="hint">DOCX, PPTX, XLSX or PDF. Maximum 40 MB.</p>
+          </div>
+          <div class="split">
+            <div class="field">
+              <label for="source">Source language</label>
+              <select id="source"><option value="">Auto-detect</option></select>
+            </div>
+            <div class="field">
+              <label for="engine">Translation engine</label>
+              <select id="engine"></select>
+            </div>
+          </div>
+          <div class="field">
+            <label for="glossary">Glossary</label>
+            <select id="glossary"><option value="">Configured default</option><option value="none">No glossary</option></select>
+            <p class="hint">CSV files in the local <code>glossary</code> folder. PDF translation currently cannot apply Translator glossaries.</p>
+          </div>
+          <div class="field">
+            <label for="targets">Target languages</label>
+            <select id="targets" multiple required></select>
+            <p class="hint">Use Ctrl/Cmd to select more than one language.</p>
+          </div>
+          <button class="primary" type="submit">Translate document</button>
+          <div id="form-error" class="error" role="alert"></div>
+        </form>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Run details</h2>
+          <p>Live timing and service usage for the latest translation.</p>
+        </div>
+        <div class="card-body">
+          <div id="idle" class="empty">Choose a document to start a translation.</div>
+          <div id="run" class="run">
+            <div class="status-row">
+              <div class="status-copy" aria-live="polite"><strong id="run-title">Translating document</strong><span id="run-subtitle">Preparing text and artwork…</span></div>
+              <div id="timer" class="timer">0.0s</div>
+            </div>
+            <div class="progress"><span></span></div>
+            <div class="metric-grid">
+              <div class="metric"><span>Total time</span><strong id="metric-time">—</strong></div>
+              <div class="metric"><span>Estimated cost</span><strong id="metric-cost">—</strong></div>
+              <div class="metric"><span>Input tokens</span><strong id="metric-input">—</strong></div>
+              <div class="metric"><span>Output tokens</span><strong id="metric-output">—</strong></div>
+            </div>
+            <h3 class="section-title">Downloads</h3>
+            <div id="downloads" class="downloads"></div>
+            <section id="warnings-section" hidden>
+              <h3 class="section-title">Review notes</h3>
+              <div id="warnings" class="subtle"></div>
+            </section>
+            <h3 class="section-title">Step timing</h3>
+            <div id="timings" class="subtle">Waiting for completion…</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card history">
+      <div class="card-head">
+        <h2>Recent translations</h2>
+        <p>Recent results are loaded from this computer’s local showcase storage.</p>
+      </div>
+      <div id="history"><div class="empty">Loading recent results…</div></div>
+    </section>
+  </main>
+
+  <script>
+    "use strict";
+    const byId = id => document.getElementById(id);
+    const form = byId("translation-form");
+    let clock;
+    const sum = values => values.reduce((total, value) => total + (Number(value) || 0), 0);
+    const seconds = value => `${Number(value || 0).toFixed(1)}s`;
+    const number = value => value == null ? "—" : new Intl.NumberFormat().format(value);
+    const money = value => value == null ? "Not configured" : `$${Number(value).toFixed(4)}`;
+    const usage = report => Object.fromEntries(
+      ["inputTokens", "outputTokens", "charactersCharged", "charactersSubmitted"].map(key => {
+        const values = (report.outputs || []).map(output => output.usage?.[key]);
+        const known = values.length && values.every(value =>
+          value != null && value !== "" && Number.isFinite(Number(value))
+        );
+        return [key, known ? values.reduce((total, value) => total + Number(value), 0) : null];
+      })
+    );
+    const downloadUrl = (report, output) =>
+      `/api/jobs/${report.jobId}/${output.path.split("/").map(encodeURIComponent).join("/")}`;
+
+    async function loadOptions() {
+      try {
+        const response = await fetch("/api/options");
+        if (!response.ok) throw new Error();
+        const {languages, engines, glossaries} = await response.json();
+        for (const code of languages) {
+          byId("source").add(new Option(code, code));
+          byId("targets").add(new Option(code, code));
+        }
+        for (const engine of engines) byId("engine").add(new Option(
+          engine === "llm" ? "Foundry contextual model" : "Azure Translator", engine
+        ));
+        for (const name of glossaries) byId("glossary").add(new Option(name, name));
+        if (glossaries.includes("sample")) byId("glossary").value = "sample";
+      } catch {
+        byId("form-error").textContent = "Could not load translation configuration.";
+      }
+    }
+
+    function renderDownloads(report) {
+      const container = byId("downloads");
+      container.replaceChildren();
+      for (const output of report.outputs || []) {
+        const link = document.createElement("a");
+        link.className = "download";
+        link.href = downloadUrl(report, output);
+        link.download = output.path.split("/").pop();
+        const name = document.createElement("span");
+        name.textContent = output.path;
+        const badge = document.createElement("span");
+        badge.className = "badge";
+        badge.textContent = output.language;
+        link.append(name, badge);
+        container.append(link);
+      }
+    }
+
+    function renderReport(report, elapsed) {
+      const totals = usage(report);
+      const duration = sum(Object.values(report.durations || {}));
+      const characterMode = report.engine === "translator";
+      byId("metric-input").previousElementSibling.textContent = characterMode ? "Characters used" : "Input tokens";
+      byId("metric-output").previousElementSibling.textContent = characterMode ? "Character mode" : "Output tokens";
+      byId("idle").style.display = "none";
+      byId("run").classList.add("active", "complete");
+      byId("run-title").textContent = "Translation complete";
+      byId("run-subtitle").textContent = `${report.sourceLanguage} → ${report.targetLanguages.join(", ")}`;
+      const glossaryOutputs = (report.outputs || []).filter(output => output.glossary && output.glossaryMode);
+      if (glossaryOutputs.length) {
+        const targets = glossaryOutputs.map(output => output.language).join(", ");
+        const label = characterMode ? "applied" : "supplied as guidance";
+        byId("run-subtitle").textContent +=
+          ` · ${glossaryOutputs[0].glossary} glossary ${label} for ${targets}`;
+      }
+      byId("timer").textContent = seconds(elapsed ?? duration);
+      byId("metric-time").textContent = seconds(duration);
+      byId("metric-cost").textContent = money(report.estimatedCostUSD);
+      byId("metric-input").textContent = number(characterMode
+        ? totals.charactersCharged ?? totals.charactersSubmitted : totals.inputTokens);
+      byId("metric-output").textContent = characterMode ? report.engine : number(totals.outputTokens);
+      renderDownloads(report);
+      const warnings = byId("warnings");
+      warnings.replaceChildren();
+      for (const warning of report.warnings || []) {
+        const item = document.createElement("p");
+        item.textContent = warning;
+        warnings.append(item);
+      }
+      byId("warnings-section").hidden = !warnings.childElementCount;
+      byId("timings").textContent = Object.entries(report.durations || {})
+        .map(([step, value]) => `${step}: ${seconds(value)}`).join(" · ") || "No timing details available.";
+    }
+
+    async function loadHistory() {
+      try {
+        const response = await fetch("/api/jobs");
+        if (!response.ok) throw new Error();
+        const {jobs} = await response.json();
+        const container = byId("history");
+        if (!jobs.length) {
+          container.innerHTML = '<div class="empty">No local translations yet.</div>';
+          return;
+        }
+        const table = document.createElement("table");
+        table.innerHTML = "<thead><tr><th>Document</th><th>Languages</th><th>Usage</th><th>Time</th><th>Results</th></tr></thead>";
+        const body = document.createElement("tbody");
+        for (const report of jobs) {
+          const totals = usage(report);
+          const row = document.createElement("tr");
+          const fileCell = document.createElement("td");
+          const file = document.createElement("span");
+          file.className = "file";
+          file.textContent = report.sourceFile;
+          file.title = report.sourceFile;
+          const engine = document.createElement("span");
+          engine.className = "subtle";
+          engine.textContent = report.engine === "llm" ? report.model : "Azure Translator";
+          fileCell.append(file, engine);
+          const languages = document.createElement("td");
+          languages.textContent = `${report.sourceLanguage} → ${report.targetLanguages.join(", ")}`;
+          const usageCell = document.createElement("td");
+          usageCell.innerHTML = report.engine === "llm"
+            ? `<span class="subtle">${number(totals.inputTokens)} in · ${number(totals.outputTokens)} out<br>${money(report.estimatedCostUSD)}</span>`
+            : `<span class="subtle">${number(totals.charactersCharged ?? totals.charactersSubmitted)} characters<br>${money(report.estimatedCostUSD)}</span>`;
+          const time = document.createElement("td");
+          time.textContent = seconds(sum(Object.values(report.durations || {})));
+          const actions = document.createElement("td");
+          const links = document.createElement("div");
+          links.className = "history-actions";
+          for (const output of report.outputs || []) {
+            const link = document.createElement("a");
+            link.className = "mini-link";
+            link.href = downloadUrl(report, output);
+            link.textContent = output.language;
+            links.append(link);
+          }
+          actions.append(links);
+          row.append(fileCell, languages, usageCell, time, actions);
+          body.append(row);
+        }
+        table.append(body);
+        container.replaceChildren(table);
+      } catch {
+        byId("history").innerHTML = '<div class="empty">Could not load recent results.</div>';
+      }
+    }
+
+    form.addEventListener("submit", async event => {
+      event.preventDefault();
+      clearInterval(clock);
+      const file = byId("document-file").files[0];
+      const targets = [...byId("targets").selectedOptions];
+      if (!file || !targets.length) return;
+      const query = new URLSearchParams({
+        filename: file.name, sourceLanguage: byId("source").value, engine: byId("engine").value,
+        glossaryName: byId("glossary").value
+      });
+      for (const item of targets) query.append("targetLanguage", item.value);
+      const button = form.querySelector("button");
+      const started = performance.now();
+      button.disabled = true;
+      byId("form-error").textContent = "";
+      byId("idle").style.display = "none";
+      byId("run").classList.add("active");
+      byId("run").classList.remove("complete");
+      byId("run-title").textContent = "Translating document";
+      byId("run-subtitle").textContent = `${file.name} · ${targets.map(item => item.value).join(", ")}`;
+      byId("downloads").replaceChildren();
+      byId("warnings").replaceChildren();
+      byId("warnings-section").hidden = true;
+      byId("timings").textContent = "Waiting for completion…";
+      byId("metric-time").textContent = "—";
+      byId("metric-cost").textContent = "—";
+      byId("metric-input").textContent = "—";
+      byId("metric-output").textContent = "—";
+      clock = setInterval(() => {
+        byId("timer").textContent = seconds((performance.now() - started) / 1000);
+      }, 100);
+      try {
+        const response = await fetch(`/api/jobs?${query}`, {
+          method: "POST", body: file, headers: {"X-Translation-Showcase": "1"}
+        });
+        const report = await response.json();
+        if (!response.ok) throw new Error(report.detail || "Translation failed.");
+        renderReport(report, (performance.now() - started) / 1000);
+        await loadHistory();
+      } catch (error) {
+        byId("run").classList.remove("complete");
+        byId("run-title").textContent = "Translation failed";
+        byId("run-subtitle").textContent = "Check the document and live service configuration.";
+        byId("timings").textContent = error.message;
+        byId("timer").textContent = seconds((performance.now() - started) / 1000);
+      } finally {
+        clearInterval(clock);
+        button.disabled = false;
+      }
+    });
+    loadOptions();
+    loadHistory();
+  </script>
 </body>
 </html>

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 """Loopback-only showcase for the local translation workflow."""
 
+import json
 import logging
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -11,8 +12,8 @@ from starlette.concurrency import run_in_threadpool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from scripts import local_demo
-from services import languages, storage, translation_engines
-from services.config import integer
+from services import glossary, languages, storage, translation_engines
+from services.config import ConfigurationError, ExternalServiceError, ReconstructionError, integer
 
 PAGE = Path(__file__).resolve().parents[1] / "showcase" / "index.html"
 LOG = logging.getLogger(__name__)
@@ -28,10 +29,30 @@ def create_app(output_dir=Path("samples/results/local")):
 
     @app.get("/api/options")
     def options():
-        return {"languages": languages.enabled(), "engines": translation_engines.ENGINES}
+        return {"languages": languages.enabled(), "engines": translation_engines.ENGINES,
+                "glossaries": glossary.available()}
+
+    @app.get("/api/jobs")
+    def history():
+        reports = []
+        if output_dir.exists():
+            for path in sorted(output_dir.glob("*/report.json"), key=lambda item: item.stat().st_mtime,
+                               reverse=True):
+                job_id = path.parent.name
+                if not storage.valid_job_id(job_id):
+                    continue
+                try:
+                    report = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, UnicodeError, json.JSONDecodeError):
+                    continue
+                reports.append(report)
+                if len(reports) == 20:
+                    break
+        return {"jobs": reports}
 
     @app.post("/api/jobs")
-    async def submit(request: Request, filename: str, engine: str = "translator", sourceLanguage: str = ""):
+    async def submit(request: Request, filename: str, engine: str = "translator", sourceLanguage: str = "",
+                     glossaryName: str = ""):
         if (request.headers.get("origin") not in {"http://" + request.headers["host"], None}
                 or request.headers.get("x-translation-showcase") != "1"):
             raise HTTPException(403, "Use the loopback showcase page.")
@@ -60,14 +81,17 @@ def create_app(output_dir=Path("samples/results/local")):
                     file.write(chunk)
             try:
                 return await run_in_threadpool(local_demo.run_file, path, output_dir, sourceLanguage, targets,
-                                               engine=engine)
+                                               engine=engine, glossary_name=glossaryName)
+            except (ConfigurationError, ExternalServiceError, ReconstructionError, ValueError) as error:
+                LOG.warning("local translation failed safely exception=%s", type(error).__name__)
+                raise HTTPException(422, str(error)) from None
             except Exception as error:
                 LOG.error("local translation failed exception=%s", type(error).__name__)
                 raise HTTPException(422, "Translation failed; check file and service configuration.") from None
 
     @app.get("/api/jobs/{job_id}/{language}/{filename}")
     def download(job_id: str, language: str, filename: str):
-        if (not storage.valid_job_id(job_id) or language not in languages.enabled()
+        if (not storage.valid_job_id(job_id) or language not in languages.LATIN_CODES
                 or filename in {".", ".."} or any(c in filename for c in "/\\:\r\n\x00")):
             raise HTTPException(404)
         path = output_dir / job_id / language / filename

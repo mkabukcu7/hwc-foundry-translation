@@ -10,6 +10,8 @@ webinar,webinaire,Webinar,
 
 Select a CSV by base name with `glossaryName`, set `GLOSSARY_PATH` to an alternate default file, or set `GLOSSARY_MODE=none` to disable terminology. Place named CSVs beside the default file. For deployment, include them under `src/glossary/` and keep the two sample copies in sync. To add a language, enable its code in `SUPPORTED_LANGUAGES` and add a column with that code.
 
+The local showcase lists CSV files from the `glossary/` folder and lets you select one for each run. Use the file's base name, for example `brand.csv` appears as `brand`. Glossaries are applied to Office Translator jobs and supplied as terminology guidance to the Foundry engine. PDF text translation does not apply the glossary.
+
 | Source term | Target equivalent | DNT (`true` or blank) |
 |---|---|---|
 | `<source>` | `<target>` | |

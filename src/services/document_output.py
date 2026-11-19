@@ -43,7 +43,7 @@ def paragraph(text, width, height):
     except UnicodeEncodeError:
         raise ReconstructionError(
             "Translation completed, but PDF reconstruction cannot render this character set. "
-            "The translated text is available as a TXT download."
+            "The output could not be created."
         ) from None
     for size in range(18, 3, -1):
         content = Paragraph(escape(text).replace("\n", "<br/>"), ParagraphStyle(
